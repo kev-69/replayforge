@@ -1,0 +1,42 @@
+{
+  "name": "replayforge",
+  "version": "0.1.0",
+  "private": true,
+  "description": "A system that captures HTTP traffic, stores requests as replayable events, and reproduces those requests against another API environment to test behavior, compatibility, performance, and reliability.",
+  "type": "module",
+  "packageManager": "pnpm@10.33.2",
+  "engines": {
+    "node": ">=22.13"
+  },
+  "scripts": {
+    "typecheck": "tsc -p tsconfig.json",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "eslint .",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "check": "pnpm typecheck && pnpm lint && pnpm test",
+    "dev": "pnpm --filter @replayforge/demo-api dev",
+    "dev:capture": "pnpm --filter @replayforge/demo-api dev:capture"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/kev-69/replayforge.git"
+  },
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/kev-69/replayforge/issues"
+  },
+  "homepage": "https://github.com/kev-69/replayforge#readme",
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/node": "22.20.5",
+    "eslint": "10.14.0",
+    "prettier": "3.9.10",
+    "tsx": "4.23.15",
+    "typescript": "6.0.3",
+    "typescript-eslint": "8.72.1",
+    "vite": "8.3.6",
+    "vitest": "5.1.0"
+  }
+}

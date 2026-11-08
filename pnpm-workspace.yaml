@@ -1,0 +1,8 @@
+packages:
+  - "packages/*"
+  - "apps/*"
+
+# pnpm 10 does not run dependency install scripts unless they are allow-listed.
+# esbuild (used by tsx and vite) uses one to set up its native binary.
+onlyBuiltDependencies:
+  - esbuild
