@@ -1,0 +1,40 @@
+name: replayforge
+
+# Local environment:
+#   api   demo e-commerce API with capture on  -> http://localhost:3001
+#         captured traffic goes to ./recordings/<recordingId>/events.jsonl
+#   k6    traffic generator, only runs on demand:  docker compose run --rm k6
+
+services:
+  api:
+    build:
+      context: .
+      dockerfile: apps/demo-api/Dockerfile
+    image: replayforge/demo-api:dev
+    environment:
+      PORT: "3001"
+      CAPTURE: "on"
+      RECORDINGS_DIR: /app/recordings
+    ports:
+      - "3001:3001"
+    volumes:
+      - ./recordings:/app/recordings
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  k6:
+    image: grafana/k6:2.3.0
+    profiles: ["tools"]
+    command: ["run", "/scripts/journey.js"]
+    environment:
+      BASE_URL: http://api:3001
+      ITERATIONS: "200"
+      VUS: "10"
+    volumes:
+      - ./apps/traffic:/scripts:ro
+    depends_on:
+      api:
+        condition: service_healthy
