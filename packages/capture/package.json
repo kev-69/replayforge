@@ -1,0 +1,20 @@
+{
+  "name": "@replayforge/capture",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Fastify plugin that records HTTP requests and responses as replayable events.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "fastify-plugin": "6.0.1",
+    "zod": "4.6.7"
+  },
+  "peerDependencies": {
+    "fastify": "^5.0.0"
+  },
+  "devDependencies": {
+    "fastify": "5.12.8"
+  }
+}
