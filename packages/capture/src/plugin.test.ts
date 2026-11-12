@@ -3,7 +3,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import Fastify, { type FastifyInstance } from "fastify";
 import { afterEach, describe, expect, it } from "vitest";
 import { authorizationSessionKey, replayforgeCapture, type CaptureOptions } from "./plugin.js";
-import { CapturedExchange } from "./schema.js";
+import { CapturedExchange } from "@replayforge/core";
 import { MemorySink, type CaptureSink } from "./sinks.js";
 
 let app: FastifyInstance;
