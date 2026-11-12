@@ -17,7 +17,9 @@
     "format:check": "prettier --check .",
     "check": "pnpm typecheck && pnpm lint && pnpm test",
     "dev": "pnpm --filter @replayforge/demo-api dev",
-    "dev:capture": "pnpm --filter @replayforge/demo-api dev:capture"
+    "dev:capture": "pnpm --filter @replayforge/demo-api dev:capture",
+    "replayforge": "tsx packages/cli/src/main.ts",
+    "db:migrate": "tsx packages/cli/src/main.ts db migrate"
   },
   "repository": {
     "type": "git",
