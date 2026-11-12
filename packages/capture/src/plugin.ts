@@ -11,7 +11,7 @@ import {
   CapturedExchange,
   type CapturedBody,
   type HeaderMap,
-} from "./schema.js";
+} from "@replayforge/core";
 import type { CaptureSink } from "./sinks.js";
 
 export interface CaptureOptions {
