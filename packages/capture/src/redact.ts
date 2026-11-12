@@ -1,4 +1,4 @@
-import type { CapturedBody, HeaderMap } from "./schema.js";
+import type { CapturedBody, HeaderMap } from "@replayforge/core";
 
 /**
  * Redaction: replace sensitive values before they are written to disk.
