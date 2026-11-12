@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { CapturedExchange } from "./schema.js";
+import { CapturedExchange } from "@replayforge/core";
 import { JsonlFileSink } from "./sinks.js";
 
 let dir: string;
