@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { REDACTED, redactHeaders, redactJsonBody, toLowerSet } from "./redact.js";
-import type { CapturedBody } from "./schema.js";
+import type { CapturedBody } from "@replayforge/core";
 
 const text = (data: string, truncated = false): CapturedBody => ({
   kind: "text",
