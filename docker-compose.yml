@@ -1,26 +1,63 @@
 name: replayforge
 
 # Local environment:
-#   api   demo e-commerce API with capture on  -> http://localhost:3001
-#         captured traffic goes to ./recordings/<recordingId>/events.jsonl
-#   k6    traffic generator, only runs on demand:  docker compose run --rm k6
+#   postgres  event store + read models          -> localhost:5435
+#   migrate   one-shot: applies DB migrations, then exits
+#   api       demo e-commerce API with capture on -> http://localhost:3001
+#             exchanges -> ./recordings/<recordingId>/events.jsonl
+#             lifecycle events (started/sealed) -> Postgres
+#   k6        traffic generator, only runs on demand:  docker compose run --rm k6
+
+x-app: &app
+  build:
+    context: .
+    dockerfile: apps/demo-api/Dockerfile
+  image: replayforge/app:dev
 
 services:
+  postgres:
+    image: postgres:16.15-alpine
+    environment:
+      POSTGRES_USER: replayforge
+      POSTGRES_PASSWORD: replayforge
+      POSTGRES_DB: replayforge
+    ports:
+      - "5435:5432" # host port 5435: 5432-5434 are often taken by other local Postgres instances
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U replayforge -d replayforge"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # Runs once and exits. `api` waits for it to finish successfully, so the
+  # schema always exists before the first event is written.
+  migrate:
+    <<: *app
+    command: ["node", "--import", "tsx", "packages/cli/src/main.ts", "db", "migrate"]
+    environment:
+      DATABASE_URL: postgres://replayforge:replayforge@postgres:5432/replayforge
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   api:
-    build:
-      context: .
-      dockerfile: apps/demo-api/Dockerfile
-    image: replayforge/demo-api:dev
+    <<: *app
     environment:
       PORT: "3001"
       CAPTURE: "on"
       RECORDINGS_DIR: /app/recordings
+      DATABASE_URL: postgres://replayforge:replayforge@postgres:5432/replayforge
     ports:
       - "3001:3001"
     volumes:
       - ./recordings:/app/recordings
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "wget", "-qO-", "http://localhost:3001/health"]
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:3001/health"] # not localhost: in Alpine that resolves to IPv6 ::1, and the server listens on IPv4
       interval: 5s
       timeout: 3s
       retries: 10
@@ -38,3 +75,6 @@ services:
     depends_on:
       api:
         condition: service_healthy
+
+volumes:
+  pgdata:
