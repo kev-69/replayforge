@@ -1,6 +1,6 @@
 import { isUtf8 } from "node:buffer";
 import { Transform, type TransformCallback } from "node:stream";
-import type { CapturedBody } from "./schema.js";
+import type { CapturedBody } from "@replayforge/core";
 
 /**
  * A pass-through stream that keeps a copy of the first `maxBytes` bytes that
