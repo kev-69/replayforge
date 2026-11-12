@@ -7,10 +7,12 @@
   "scripts": {
     "start": "tsx src/server.ts",
     "dev": "tsx watch src/server.ts --port 3001",
-    "dev:capture": "tsx watch src/server.ts --port 3001 --capture --recordings-dir ../../recordings"
+    "dev:capture": "tsx watch src/server.ts --port 3001 --capture --recordings-dir ../../recordings --database-url postgres://replayforge:replayforge@localhost:5435/replayforge"
   },
   "dependencies": {
     "@replayforge/capture": "workspace:*",
+    "@replayforge/core": "workspace:*",
+    "@replayforge/storage": "workspace:*",
     "fastify": "5.12.8",
     "zod": "4.6.7"
   }
