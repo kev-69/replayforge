@@ -1,7 +1,12 @@
-# Architecture: Stage 1 (HTTP traffic capture)
+# Architecture
 
-> This file grows with each stage. Right now it covers only **capture**:
-> recording what an API received and what it answered, in a form we can replay later.
+> This file grows with each stage.
+>
+> - **Part I: Stage 1, capture.** Recording what an API received and what it answered.
+> - **[Part II: Stage 2, event sourcing](#part-ii-stage-2-event-sourcing).** Recording _our own_ lifecycle as events in Postgres.
+>   The event formats themselves are described in [event-schema.md](event-schema.md).
+
+# Part I: Stage 1 (HTTP traffic capture)
 
 ## The big picture
 
@@ -20,11 +25,11 @@
 
 Code lives in two places:
 
-| Path                                                  | What it is                                                                 |
-| ----------------------------------------------------- | -------------------------------------------------------------------------- |
-| [packages/capture](../packages/capture/src)           | The reusable part: the Fastify plugin, the event schema, the sinks         |
-| [apps/demo-api](../apps/demo-api/src)                 | A small e-commerce API: the "system under test" whose traffic we record    |
-| [apps/traffic/journey.js](../apps/traffic/journey.js) | A k6 script that simulates shoppers so there's realistic traffic to record |
+| Path                                                  | What it is                                                                                  |
+| ----------------------------------------------------- | ------------------------------------------------------------------------------------------- |
+| [packages/capture](../packages/capture/src)           | The reusable part: the Fastify plugin and the sinks (the schema moved to `core` in Stage 2) |
+| [apps/demo-api](../apps/demo-api/src)                 | A small e-commerce API: the "system under test" whose traffic we record                     |
+| [apps/traffic/journey.js](../apps/traffic/journey.js) | A k6 script that simulates shoppers so there's realistic traffic to record                  |
 
 `apps/demo-api` uses `@replayforge/capture` exactly like any third-party app would: it registers the plugin and passes in a sink.
 
@@ -131,8 +136,8 @@ garbage-collected along with the request.
 
 ### The event format: one self-contained "exchange"
 
-Each line in a recording is a `CapturedExchange` ([schema.ts](../packages/capture/src/schema.ts)):
-a request **and** its response, together. This is a first draft that Stage 2 refines. Abridged
+Each line in a recording is a `CapturedExchange` ([exchange.ts](../packages/core/src/exchange.ts), moved there in Stage 2):
+a request **and** its response, together. Abridged
 from a real recording:
 
 ```json
@@ -283,3 +288,211 @@ Seeing the gaps in a tool is part of understanding it:
    [plugin.test.ts](../packages/capture/src/plugin.test.ts) and explain why the order of `sink.exchanges` is different from `sequence`.
 6. Comment out the `stream.on("error", ...)` listener in [sinks.ts](../packages/capture/src/sinks.ts)
    and think through what happens when the disk fills up.
+
+---
+
+# Part II: Stage 2 (event sourcing)
+
+Stage 1 records what happened **in the API**. Stage 2 records what happens **to ReplayForge's own
+data**, the recordings, as a log of events in Postgres. Then it derives queryable tables from that log.
+
+## The big picture
+
+```
+ demo-api (on start / shutdown)      replayforge CLI (label, seal, ...)
+            │                                    │
+            └──────────────┬─────────────────────┘
+                           ▼  commands ("seal rec_1")
+                 Recordings  ──▶  handleCommand: load ─▶ decide ─▶ append (retry on conflict)
+                                       │                    ▲
+                                       │      core: decideRecording / evolveRecording (pure)
+                                       ▼
+                        ┌──────────── Postgres ────────────┐
+                        │  events            (append-only)  │  ◀── source of truth
+                        │      │ catchUp(): read after checkpoint, apply, move checkpoint
+                        │      ▼                            │
+                        │  recordings        (read model)   │  ◀── derived, rebuildable
+                        │  projection_checkpoints           │
+                        └───────────────────────────────────┘
+                                       │
+                                       ▼  queries
+                          replayforge recordings list / show
+```
+
+| Package                                     | Role                                                         | Does I/O? |
+| ------------------------------------------- | ------------------------------------------------------------ | --------- |
+| [packages/core](../packages/core/src)       | Event schemas and business rules (`decide`, `evolve`)        | no        |
+| [packages/storage](../packages/storage/src) | Event store, command loop, projections, migrations           | Postgres  |
+| [packages/cli](../packages/cli/src)         | `replayforge` command-line tool                              | Postgres  |
+| [packages/capture](../packages/capture/src) | Unchanged, except it imports the exchange schema from `core` | files     |
+
+The dependency arrows only point one way: `core` ← `storage` ← `cli` / `demo-api`. Business rules
+know nothing about Postgres, so they can be tested (and later reused by replay workers) without a
+database.
+
+## 1. Why event sourcing?
+
+The usual way to store a recording is one row you `UPDATE`. That stores **the current state** and
+throws away how it got there. Event sourcing stores **every change as a fact** and computes the
+state from the facts:
+
+| Question                                                 | A mutable row               | An event log                           |
+| -------------------------------------------------------- | --------------------------- | -------------------------------------- |
+| Is `rec_1` sealed?                                       | yes                         | yes (fold the events)                  |
+| _When_ was it sealed, and was it a clean shutdown?       | maybe, if you added columns | `RecordingSealed { reason, sealedAt }` |
+| Who added the `baseline` label, and when was it removed? | lost                        | two events, both kept                  |
+| A bug wrote bad data into the table                      | it's gone                   | fix the projection, **rebuild**        |
+
+**Honest trade-off:** for four event types this is more machinery than a single table needs. We
+build it now because it's the subject of this stage, and because later stages need it for real:
+replay sessions (Stage 4+) produce a stream of progress facts from several workers, which is exactly
+the shape event sourcing handles well.
+
+## 2. Commands, events and the aggregate
+
+[recording.ts](../packages/core/src/recording.ts) defines one **aggregate**, the Recording. An
+aggregate is a unit of consistency: its rules are checked against its own events.
+
+- A **command** is a request: `SealRecording`. It can be refused.
+- An **event** is a fact: `RecordingSealed`. It has already happened and is never changed.
+- `evolveRecording(state, event)` applies one event. `events.reduce(evolve, initialState)` gives
+  the current state.
+- `decideRecording(command, state)` enforces the rules and returns the new events. It throws for
+  an invalid command (sealing a recording that doesn't exist), and returns `[]` when there's nothing
+  to change.
+
+Both functions are **pure** (no database, no clock: timestamps are passed in). The tests in
+[recording.test.ts](../packages/core/src/recording.test.ts) read like specifications:
+_given_ these events, _when_ this command, _then_ these events.
+
+**Idempotency.** Sealing an already-sealed recording, or adding a label it already has, returns `[]`
+instead of an error. Commands get retried (after a timeout, or after a conflict, see below), and a
+retry must not create a second `RecordingSealed`.
+
+## 3. The event store
+
+[001_event_store.sql](../packages/storage/migrations/001_event_store.sql) creates one table for all
+events. Three ideas are packed into it.
+
+**Append-only, enforced by the database.** A trigger rejects every `UPDATE` and `DELETE`. Events
+are history, and history is not edited. The test "refuses to UPDATE or DELETE events" proves it.
+
+**Optimistic concurrency.** Every append says which version it expects the stream to be at:
+
+```ts
+store.append("recording-rec_1", /* expectedVersion */ 2, [sealedEvent]);
+```
+
+If someone else appended event #3 after we read the stream, the append fails with
+`ConcurrencyError` instead of silently building on stale state. It's "optimistic" because nothing is
+locked while you decide. You only find out at write time, which is cheap when conflicts are rare.
+The `UNIQUE (stream_id, stream_version)` constraint is a second safety net: even with a bug in the
+check, two writers can't both store event #3.
+
+**One global order.** `global_position` orders all events of all streams, so a projection can say
+"give me everything after position 41". One subtle trap lurks here, and
+[event-store.ts](../packages/storage/src/event-store.ts) explains it in detail: positions are handed
+out at INSERT time but become visible at COMMIT time, so concurrent transactions can make a
+projection **skip** an event. We avoid that by making every append take the same advisory lock
+(`pg_advisory_xact_lock`), so appends commit in position order. The price: appends run one at a
+time. That's fine for lifecycle events. High-volume event stores use smarter tricks (tracking
+transaction ids, or treating a gap as "wait a moment") that aren't worth the complexity here.
+
+## 4. The command loop
+
+[command-handler.ts](../packages/storage/src/command-handler.ts) is the only place where state
+changes, and it always runs the same four steps:
+
+```
+1. history = readStream("recording-rec_1")          → [Started, LabelAdded]   (version 2)
+2. state   = history.reduce(evolve)                 → { status: "recording", labels: [...] }
+3. events  = decide(SealRecording, state)           → [RecordingSealed]
+4. append(stream, expectedVersion = 2, events)      → ok, or ConcurrencyError → go back to 1
+```
+
+A retry after a conflict is always safe because `decide` is pure. If the competing writer was
+_also_ sealing, the second attempt sees `status: "sealed"` and decides `[]`. The test "reloads and
+decides again when another writer got there first" sets up exactly that race.
+
+## 5. Projections: turning the log into tables
+
+The log is great for "what happened to rec_1?" and terrible for "list all recordings, newest first".
+That query goes to a **read model**, the `recordings` table, which
+[recordings.ts](../packages/storage/src/recordings.ts) keeps up to date. Each event type maps to one
+small SQL statement.
+
+[projector.ts](../packages/storage/src/projector.ts) drives it with a **checkpoint**: "the
+`recordings` projection has applied everything up to position N". `catchUp()` reads events after N,
+applies them, and moves N, **in one transaction**. Either the table changes and the checkpoint
+moves, or neither does. After a crash it resumes at exactly the right place: no event is applied
+twice or skipped.
+
+Two consequences to understand:
+
+- **Eventual consistency.** A command writes events, not the table. Until `catchUp()` runs, the
+  read model lags behind. The CLI and the demo API call `catchUp()` right after each command, so in
+  practice the lag is milliseconds, but the test "is empty until catchUp() runs" shows it.
+- **Rebuilds.** Because the table is only derived data, `replayforge projections rebuild` can throw
+  it away and replay every event from position 0. That fixes a buggy projection, and a new
+  projection can be filled from history. The test "can be rebuilt from the events" corrupts the table
+  by hand, rebuilds, and gets the original back.
+
+## 6. Migrations
+
+[migrate.ts](../packages/storage/src/migrate.ts) is a minimal migration runner: numbered `.sql`
+files, a `schema_migrations` table recording which ones ran, each file applied in a transaction,
+plus an advisory lock so two processes starting together don't apply the same file twice.
+
+In Docker Compose, a one-shot `migrate` service runs `replayforge db migrate` and exits. `api`
+declares `depends_on: migrate: condition: service_completed_successfully`, so the schema always
+exists before the API writes its first event.
+
+## 7. How the demo API uses it, and stays fail-open
+
+[server.ts](../apps/demo-api/src/server.ts) and
+[recording-lifecycle.ts](../apps/demo-api/src/recording-lifecycle.ts):
+
+1. On startup (capture on and a database configured): `RecordingStarted`, with the exact capture
+   settings and the absolute path of the JSONL file.
+2. On shutdown: first `app.close()`, which flushes the sink, and **then** `RecordingSealed` with the
+   sink's final `written`/`dropped` counts. In the other order, the counts could still change.
+
+If Postgres is down, both steps log a warning and the API carries on. Traffic is still captured to
+the file. Same rule as Stage 1: **the observability tool must never take down the thing it
+observes.**
+
+If the process is killed (`kill -9`, power loss), no `RecordingSealed` is written, and the
+recording stays `recording` forever. That's the honest state. `replayforge recordings seal <id>`
+appends a `manual` seal with unknown (`null`) counts. Stage 3 will be able to count the file and
+check its integrity.
+
+## 8. Testing against real Postgres without Docker
+
+The storage tests use [PGlite](https://pglite.dev): real Postgres compiled to WebAssembly, running
+inside the test process. [testing.ts](../packages/storage/src/testing.ts) gives each test a fresh
+in-memory database with the migrations applied. That means the triggers, advisory locks, `JSONB`
+and `TEXT[]` all behave exactly as in production, with no shared state between tests and no
+containers to start.
+
+The `Database` interface in [db.ts](../packages/storage/src/db.ts) (`query`, `exec`,
+`transaction`, `close`) is the seam: `createPgDatabase` (node-postgres) in production,
+`createTestDatabase` (PGlite) in tests, with the same SQL in both. One difference to know: PGlite has a single
+connection, so concurrent transactions in tests take turns instead of truly overlapping.
+
+## 9. Things to try while studying
+
+1. `docker compose up -d postgres`, `pnpm replayforge db migrate`, then `pnpm dev:capture`. Make a
+   few requests, stop the server with Ctrl+C, and run `pnpm replayforge recordings list` and
+   `pnpm replayforge recordings show <id>`.
+2. Label a recording, unlabel it, label it again. Look at `show`: the history has all three, and
+   the projection shows only the result.
+3. Open `psql` (`docker compose exec postgres psql -U replayforge`) and try
+   `UPDATE events SET type = 'x';`. Then try `UPDATE recordings SET labels = '{}';` and run
+   `pnpm replayforge projections rebuild`. Which change sticks, and why?
+4. In [recording.ts](../packages/core/src/recording.ts), make `decideRecording` throw when sealing
+   an already-sealed recording instead of returning `[]`. Which tests fail? What would that mean for
+   a demo API whose shutdown is retried?
+5. Add an `exchangeCount > 0` rule: refuse a `shutdown` seal with zero exchanges. Where does the rule
+   go, and which kind of test covers it?
+6. Remove the `pg_advisory_xact_lock` line from `EventStore.append` and reread the comment above
+   `APPEND_LOCK_KEY`. Why can't the PGlite tests catch this bug? (Hint: section 8.)
