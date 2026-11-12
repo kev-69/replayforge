@@ -2,7 +2,7 @@ import { createWriteStream, type WriteStream } from "node:fs";
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import { once } from "node:events";
-import type { CapturedExchange } from "./schema.js";
+import type { CapturedExchange } from "@replayforge/core";
 
 /**
  * A sink is where captured exchanges go.
