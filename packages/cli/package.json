@@ -1,0 +1,11 @@
+{
+  "name": "@replayforge/cli",
+  "version": "0.1.0",
+  "private": true,
+  "description": "The replayforge command-line tool.",
+  "type": "module",
+  "dependencies": {
+    "@replayforge/core": "workspace:*",
+    "@replayforge/storage": "workspace:*"
+  }
+}
