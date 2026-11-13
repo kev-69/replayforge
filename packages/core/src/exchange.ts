@@ -3,10 +3,11 @@ import { z } from "zod";
 /**
  * The shape of one captured request/response pair ("exchange").
  *
- * This is a FIRST DRAFT. Stage 2 promotes it into a proper event model in its
- * own package and adds versioning rules, and Stage 3 adds integrity hashes.
- * `schemaVersion` exists from day one so later stages can tell old recordings
- * apart from new ones.
+ * An exchange is a TRAFFIC EVENT: a fact about what happened in the observed
+ * API. It's stored in JSONL files (bulky, append-only, one per line). Facts
+ * about ReplayForge itself (a recording started or was sealed) are LIFECYCLE
+ * EVENTS and live in Postgres (see ./recording.ts). docs/event-schema.md
+ * explains the split and the versioning rules.
  *
  * Zod gives us both:
  *   - a runtime validator (CapturedExchange.parse) used before anything is written, and
@@ -84,4 +85,39 @@ export const CapturedExchange = z.object({
 });
 export type CapturedExchange = z.infer<typeof CapturedExchange>;
 
+/** The version this code WRITES. Readers may accept older ones (see parseExchange). */
 export const CAPTURE_SCHEMA_VERSION = 1 as const;
+
+export class UnsupportedSchemaVersionError extends Error {
+  constructor(readonly schemaVersion: unknown) {
+    super(
+      `unsupported exchange schemaVersion ${JSON.stringify(schemaVersion)} ` +
+        `(this build understands up to ${CAPTURE_SCHEMA_VERSION})`,
+    );
+    this.name = "UnsupportedSchemaVersionError";
+  }
+}
+
+/**
+ * Reads an exchange of ANY supported version and returns the CURRENT shape.
+ *
+ * Readers must always come through here rather than calling
+ * CapturedExchange.parse directly. When v2 exists, this is where an
+ * "upcaster" (v1 -> v2 conversion) plugs in, so the rest of the code only
+ * ever sees the latest shape:
+ *
+ *   case 1: return upcastV1toV2(CapturedExchangeV1.parse(value));
+ *   case 2: return CapturedExchange.parse(value);
+ *
+ * A version NEWER than this build is rejected loudly: guessing at a future
+ * format would silently produce wrong data.
+ */
+export function parseExchange(value: unknown): CapturedExchange {
+  const version = (value as { schemaVersion?: unknown } | null)?.schemaVersion;
+  switch (version) {
+    case 1:
+      return CapturedExchange.parse(value);
+    default:
+      throw new UnsupportedSchemaVersionError(version);
+  }
+}
