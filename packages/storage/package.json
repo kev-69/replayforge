@@ -1,0 +1,19 @@
+{
+  "name": "@replayforge/storage",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Postgres event store, migrations and projections.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts",
+    "./testing": "./src/testing.ts"
+  },
+  "dependencies": {
+    "@replayforge/core": "workspace:*",
+    "pg": "8.23.1"
+  },
+  "devDependencies": {
+    "@electric-sql/pglite": "0.5.16",
+    "@types/pg": "8.23.1"
+  }
+}
