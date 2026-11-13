@@ -1,0 +1,13 @@
+{
+  "name": "@replayforge/core",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Pure domain model: event schemas and business rules. No I/O.",
+  "type": "module",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "dependencies": {
+    "zod": "4.6.7"
+  }
+}
